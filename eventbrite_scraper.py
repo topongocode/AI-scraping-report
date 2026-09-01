@@ -1,86 +1,102 @@
 import os
 import smtplib
-import time
-import urllib.parse
+import json
+import cloudscraper
+from bs4 import BeautifulSoup
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-import requests
-from bs4 import BeautifulSoup
 
-# CONFIGURAZIONE CITTÀ E KEYWORDS UNIFICATE
-CITIES = ["Milano", "Roma", "Brescia"]
-KEYWORDS_OR = "startup OR business OR networking OR \"intelligenza artificiale\" OR legaltech"
+# CONFIGURAZIONE CITTÀ E KEYWORDS
+CITIES = ["milan", "rome", "brescia"]
+KEYWORDS = ["startup", "business", "networking", "intelligenza-artificiale", "legaltech"]
 
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "topongo@gmail.com")
 RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL", "topongo@gmail.com")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 
-def search_eventbrite_per_city(city):
+def scrape_eventbrite_direct(city, keyword):
     """
-    Esegue un'unica ricerca combinata per città con pausa per evitare rate-limit.
+    Usa cloudscraper per superare i blocchi Cloudflare ed estrarre gli eventi direttamente da Eventbrite.
     """
-    query = f"site:eventbrite.it/e/ {city} ({KEYWORDS_OR})"
-    url = "https://html.duckduckgo.com/html/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
-    }
-    
+    scraper = cloudscraper.create_scraper(
+        browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
+    )
+    url = f"https://www.eventbrite.it/d/italy--{city}/{keyword}/"
     events = []
+    
     try:
-        # Pausa di rispetto per non far scattare l'anti-bot
-        time.sleep(3)
-        
-        response = requests.post(url, data={"q": query}, headers=headers, timeout=15)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            results = soup.select(".result__a")
+        res = scraper.get(url, timeout=15)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
             
-            for a in results:
-                title = a.get_text(strip=True)
-                raw_href = a.get("href", "")
-                
-                clean_link = raw_href
-                if "uddg=" in raw_href:
-                    parsed = urllib.parse.urlparse(raw_href)
-                    qs = urllib.parse.parse_qs(parsed.query)
-                    if "uddg" in qs:
-                        clean_link = qs["uddg"][0]
-                
-                if "eventbrite.it/e/" in clean_link and len(title) > 5:
-                    clean_link = clean_link.split("?")[0]
-                    events.append({"title": title, "link": clean_link})
+            # 1. Estrarre i dati JSON-LD
+            scripts = soup.find_all('script', type='application/ld+json')
+            for script in scripts:
+                if not script.string:
+                    continue
+                try:
+                    data = json.loads(script.string)
+                    items = []
+                    if isinstance(data, list):
+                        items = data
+                    elif isinstance(data, dict):
+                        if data.get('@type') == 'ItemList':
+                            items = [elem.get('item', elem) for elem in data.get('itemListElement', [])]
+                        else:
+                            items = [data]
                     
+                    for item in items:
+                        if isinstance(item, dict):
+                            name = item.get('name') or item.get('title')
+                            url_event = item.get('url')
+                            if name and url_event and '/e/' in str(url_event):
+                                events.append({"title": str(name), "link": str(url_event).split('?')[0]})
+                except Exception:
+                    continue
+
+            # 2. Fallback su tag <a> con URL /e/
+            if not events:
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if '/e/' in href:
+                        title = a.get_text(strip=True)
+                        if len(title) > 5 and not title.lower().startswith('http') and not title.lower().startswith('iscriviti'):
+                            if not href.startswith("http"):
+                                href = f"https://www.eventbrite.it{href}"
+                            events.append({"title": title, "link": href.split('?')[0]})
     except Exception as e:
-        print(f"Errore nella ricerca per {city}: {e}")
+        print(f"Errore scraping per {city} - {keyword}: {e}")
         
     return events
 
 def build_email_body(all_results):
     """
-    Costruisce l'email HTML con i risultati formattati.
+    Costruisce l'email HTML.
     """
     html = """
     <html>
     <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.5;">
         <h2 style="color: #0d47a1;">📌 Digest Settimanale Eventi Tech, AI & Business</h2>
-        <p>Ecco gli eventi selezionati su Eventbrite per <b>Milano, Roma e Brescia</b>:</p>
+        <p>Ecco gli eventi selezionati direttamente su Eventbrite per <b>Milano, Roma e Brescia</b>:</p>
         <hr style="border: 0; border-top: 1px solid #ccc;">
     """
     
     has_events = False
-    for city, events in all_results.items():
-        html += f"<h3 style='color: #1565c0; margin-top: 20px;'>📍 {city}</h3>"
+    for city, city_data in all_results.items():
+        html += f"<h3 style='color: #1565c0; margin-top: 20px;'>📍 {city.capitalize()}</h3>"
+        city_has_events = False
         
-        if events:
-            has_events = True
-            html += "<ul style='margin-top: 5px;'>"
-            for ev in events:
-                html += f"<li style='margin-bottom: 8px;'><a href='{ev['link']}' target='_blank' style='color: #1a73e8; text-decoration: none;'><b>{ev['title']}</b></a></li>"
-            html += "</ul>"
-        else:
-            html += "<p style='color: #777;'><i>Nessun evento rilevante intercettato per questa città.</i></p>"
+        for kw, events in city_data.items():
+            if events:
+                city_has_events = True
+                has_events = True
+                html += f"<p style='margin-bottom: 5px;'><b>Categoria:</b> <i>{kw}</i></p><ul style='margin-top: 0;'>"
+                for ev in events:
+                    html += f"<li style='margin-bottom: 6px;'><a href='{ev['link']}' target='_blank' style='color: #1a73e8; text-decoration: none;'><b>{ev['title']}</b></a></li>"
+                html += "</ul>"
+        
+        if not city_has_events:
+            html += "<p style='color: #777;'><i>Nessun nuovo evento trovato per questa città.</i></p>"
     
     if not has_events:
         html += "<p>Nessun evento trovato per i criteri impostati.</p>"
@@ -118,15 +134,16 @@ if __name__ == "__main__":
     seen_links = set()
     
     for city in CITIES:
-        raw_events = search_eventbrite_per_city(city)
-        unique_events = []
-        for ev in raw_events:
-            if ev['link'] not in seen_links:
-                seen_links.add(ev['link'])
-                unique_events.append(ev)
-        
-        # Prendiamo fino a 8 eventi principali per città
-        results[city] = unique_events[:8]
+        results[city] = {}
+        for kw in KEYWORDS:
+            raw_events = scrape_eventbrite_direct(city, kw)
+            unique_events = []
+            for ev in raw_events:
+                if ev['link'] not in seen_links:
+                    seen_links.add(ev['link'])
+                    unique_events.append(ev)
+            
+            results[city][kw] = unique_events[:5]
             
     html_report = build_email_body(results)
-    send_email("🗓️ Digest Eventi Tech & Business (Milano, Roma, Brescia)", html_report)
+    send_email("🗓️ Digest Eventi Tech & Business (Direct Scraping)", html_report)
