@@ -2,9 +2,8 @@ name: Monday Eventbrite Digest
 
 on:
   schedule:
-    # Gira ogni lunedì alle 06:00 UTC (08:00 ora italiana)
     - cron: '0 6 * * 1'
-  workflow_dispatch: # Permette l'avvio manuale con un click
+  workflow_dispatch:
 
 jobs:
   run-scraper:
@@ -21,6 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          playwright install chromium
 
       - name: Run Scraper
         env:
