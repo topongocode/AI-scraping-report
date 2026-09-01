@@ -1,5 +1,6 @@
 import os
 import smtplib
+import json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import requests
@@ -11,16 +12,16 @@ KEYWORDS = ["startup", "intelligenza artificiale", "legaltech", "networking"]
 
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "topongo@gmail.com")
 RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL", "topongo@gmail.com")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")  # App Password di Google
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 
 def scrape_eventbrite(city, keyword):
     """
-    Effettua lo scraping di Eventbrite per la città e keyword specificata.
+    Scraspa Eventbrite per città e keyword estraendo JSON-LD e link trasparenti.
     """
     url = f"https://www.eventbrite.it/d/italy--{city}/{keyword.replace(' ', '-')}/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "it-IT,it;q=0.9"
+        "Accept-Language": "it-IT,it;q=0.9,en;q=0.8"
     }
     
     events = []
@@ -30,23 +31,56 @@ def scrape_eventbrite(city, keyword):
             return events
         
         soup = BeautifulSoup(res.text, 'html.parser')
-        # Cerca le schede degli eventi nel markup
-        articles = soup.find_all('article')
         
-        for art in articles[:4]: # Prendi i primi 4 eventi più rilevanti
-            link_tag = art.find('a', href=True)
-            title_tag = art.find('h3') or art.find('h2')
-            
-            if link_tag and title_tag:
-                title = title_tag.get_text(strip=True)
-                link = link_tag['href']
-                if not link.startswith("http"):
-                    link = f"https://www.eventbrite.it{link}"
-                events.append({"title": title, "link": link})
+        # 1. Estrarre i dati strutturati JSON-LD
+        scripts = soup.find_all('script', type='application/ld+json')
+        for script in scripts:
+            if not script.string:
+                continue
+            try:
+                data = json.loads(script.string)
+                items = []
+                if isinstance(data, list):
+                    items = data
+                elif isinstance(data, dict):
+                    if data.get('@type') == 'ItemList':
+                        items = [elem.get('item', elem) for elem in data.get('itemListElement', [])]
+                    else:
+                        items = [data]
+                
+                for item in items:
+                    if isinstance(item, dict):
+                        name = item.get('name') or item.get('title')
+                        url_event = item.get('url')
+                        if name and url_event and '/e/' in str(url_event):
+                            events.append({"title": str(name), "link": str(url_event)})
+            except Exception:
+                continue
+
+        # 2. Fallback: ricerca diretta sui link <a> con pattern '/e/'
+        if not events:
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                if '/e/' in href:
+                    title = a.get_text(strip=True)
+                    if len(title) > 5 and not title.lower().startswith('http') and not title.lower().startswith('iscriviti'):
+                        if not href.startswith("http"):
+                            href = f"https://www.eventbrite.it{href}"
+                        events.append({"title": title, "link": href})
+
     except Exception as e:
         print(f"Errore scraping {city} - {keyword}: {e}")
     
-    return events
+    # Deduplicazione dei risultati
+    unique_events = []
+    links_seen = set()
+    for ev in events:
+        clean_link = ev['link'].split('?')[0]
+        if clean_link not in links_seen:
+            links_seen.add(clean_link)
+            unique_events.append(ev)
+            
+    return unique_events[:4]
 
 def build_email_body(all_results):
     """
