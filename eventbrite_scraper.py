@@ -1,12 +1,11 @@
 import os
 import smtplib
-import json
-import cloudscraper
-from bs4 import BeautifulSoup
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from playwright.sync_api import sync_playwright
+from bs4 import BeautifulSoup
 
-# CONFIGURAZIONE CITTÀ E KEYWORDS
 CITIES = ["milan", "rome", "brescia"]
 KEYWORDS = ["startup", "business", "networking", "intelligenza-artificiale", "legaltech"]
 
@@ -14,70 +13,57 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "topongo@gmail.com")
 RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL", "topongo@gmail.com")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 
-def scrape_eventbrite_direct(city, keyword):
+def scrape_with_browser(city, keyword):
     """
-    Usa cloudscraper per superare i blocchi Cloudflare ed estrarre gli eventi direttamente da Eventbrite.
+    Apre un browser reale Headless tramite Playwright per eseguire il JavaScript di Eventbrite.
     """
-    scraper = cloudscraper.create_scraper(
-        browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
-    )
-    url = f"https://www.eventbrite.it/d/italy--{city}/{keyword}/"
     events = []
+    url = f"https://www.eventbrite.it/d/italy--{city}/{keyword}/"
     
-    try:
-        res = scraper.get(url, timeout=15)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            
-            # 1. Estrarre i dati JSON-LD
-            scripts = soup.find_all('script', type='application/ld+json')
-            for script in scripts:
-                if not script.string:
-                    continue
-                try:
-                    data = json.loads(script.string)
-                    items = []
-                    if isinstance(data, list):
-                        items = data
-                    elif isinstance(data, dict):
-                        if data.get('@type') == 'ItemList':
-                            items = [elem.get('item', elem) for elem in data.get('itemListElement', [])]
-                        else:
-                            items = [data]
-                    
-                    for item in items:
-                        if isinstance(item, dict):
-                            name = item.get('name') or item.get('title')
-                            url_event = item.get('url')
-                            if name and url_event and '/e/' in str(url_event):
-                                events.append({"title": str(name), "link": str(url_event).split('?')[0]})
-                except Exception:
-                    continue
-
-            # 2. Fallback su tag <a> con URL /e/
-            if not events:
-                for a in soup.find_all('a', href=True):
-                    href = a['href']
-                    if '/e/' in href:
-                        title = a.get_text(strip=True)
-                        if len(title) > 5 and not title.lower().startswith('http') and not title.lower().startswith('iscriviti'):
-                            if not href.startswith("http"):
-                                href = f"https://www.eventbrite.it{href}"
-                            events.append({"title": title, "link": href.split('?')[0]})
-    except Exception as e:
-        print(f"Errore scraping per {city} - {keyword}: {e}")
+    with sync_playwright() as p:
+        # Avvia browser Chromium con User-Agent reale
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
         
+        try:
+            page.goto(url, timeout=30000, wait_until="networkidle")
+            # Attesa per consentire a React di caricare la lista eventi
+            page.wait_for_timeout(4000)
+            
+            content = page.content()
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Cerca tutti i link che portano a singoli eventi (/e/)
+            links = soup.find_all('a', href=True)
+            for a in links:
+                href = a['href']
+                title = a.get_text(strip=True)
+                
+                if '/e/' in href and len(title) > 8:
+                    clean_href = href.split('?')[0]
+                    if not clean_href.startswith("http"):
+                        clean_href = f"https://www.eventbrite.it{clean_href}"
+                    
+                    # Evita duplicati di navigazione
+                    if not any(x in clean_href for x in ["/login", "/signin", "/checkout"]):
+                        events.append({"title": title, "link": clean_href})
+                        
+        except Exception as e:
+            print(f"Errore caricamento pagina per {city} - {keyword}: {e}")
+        finally:
+            browser.close()
+            
     return events
 
 def build_email_body(all_results):
-    """
-    Costruisce l'email HTML.
-    """
     html = """
     <html>
     <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.5;">
         <h2 style="color: #0d47a1;">📌 Digest Settimanale Eventi Tech, AI & Business</h2>
-        <p>Ecco gli eventi selezionati direttamente su Eventbrite per <b>Milano, Roma e Brescia</b>:</p>
+        <p>Ecco gli eventi estratti in tempo reale da Eventbrite per <b>Milano, Roma e Brescia</b>:</p>
         <hr style="border: 0; border-top: 1px solid #ccc;">
     """
     
@@ -96,23 +82,20 @@ def build_email_body(all_results):
                 html += "</ul>"
         
         if not city_has_events:
-            html += "<p style='color: #777;'><i>Nessun nuovo evento trovato per questa città.</i></p>"
+            html += "<p style='color: #777;'><i>Nessun evento trovato per questa città.</i></p>"
     
     if not has_events:
         html += "<p>Nessun evento trovato per i criteri impostati.</p>"
         
     html += """
         <hr style="border: 0; border-top: 1px solid #ccc; margin-top: 30px;">
-        <p style='font-size: 0.85em; color: #777;'>Automazione GitHub Actions - Avv. Alessandro Ghiani</p>
+        <p style='font-size: 0.85em; color: #777;'>Automazione Headless Playwright - Avv. Alessandro Ghiani</p>
     </body>
     </html>
     """
     return html
 
 def send_email(subject, html_content):
-    """
-    Invia l'email tramite server SMTP Gmail.
-    """
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = SENDER_EMAIL
@@ -136,14 +119,14 @@ if __name__ == "__main__":
     for city in CITIES:
         results[city] = {}
         for kw in KEYWORDS:
-            raw_events = scrape_eventbrite_direct(city, kw)
+            raw_events = scrape_with_browser(city, kw)
             unique_events = []
             for ev in raw_events:
                 if ev['link'] not in seen_links:
                     seen_links.add(ev['link'])
                     unique_events.append(ev)
             
-            results[city][kw] = unique_events[:5]
+            results[city][kw] = unique_events[:4]
             
     html_report = build_email_body(results)
-    send_email("🗓️ Digest Eventi Tech & Business (Direct Scraping)", html_report)
+    send_email("🗓️ Digest Eventi Tech & Business (Playwright Engine)", html_report)
