@@ -9,13 +9,26 @@ import requests
 import feedparser
 from bs4 import BeautifulSoup
 
-# CONFIGURAZIONE SEARCH YOUTUBE & INSTAGRAM
-YOUTUBE_QUERY = 'site:youtube.com/watch ("AI tool" OR "AI tutorial" OR "nuova app AI" OR "consigli AI") when:7d'
-INSTAGRAM_QUERY = '(site:instagram.com/reel/ OR site:instagram.com/p/) ("AI tool" OR "app intelligenza artificiale" OR "tool gratuito") when:7d'
+# LISTA CREATOR ITALIANI TARGET
+CREATORS = [
+    "Giuseppe Castagna",
+    "Massimiliano Pioli",
+    "Raffaele Gaito",
+    "Martina Tips",
+    "Antonio Guadagno",
+    "Marco Montemagno",
+    "Gabrysolutions",
+    "IA per tutti"
+]
+
+# COSTRUZIONE QUERY DI RICERCA TARGETIZZATA
+CREATORS_OR_QUERY = " OR ".join([f'"{c}"' for c in CREATORS])
+
+YOUTUBE_QUERY = f'site:youtube.com/watch ({CREATORS_OR_QUERY} OR "AI tool" OR "app intelligenza artificiale") when:7d'
+INSTAGRAM_QUERY = f'(site:instagram.com/reel/ OR site:instagram.com/p/) ({CREATORS_OR_QUERY} OR "AI tool" OR "tool gratuito") when:7d'
 
 REDDIT_SUBS = ["AITools", "CoolGithubProjects", "ArtificialInteligence"]
 TELEGRAM_CHANNELS = ["aitools", "n8n_io", "aitoolsdaily"]
-
 APP_KEYWORDS = ["app", "tool", "free", "gratis", "github", "software", "consiglio", "tutorial", "prompt", "workflow", "ai"]
 
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "topongo@gmail.com")
@@ -32,12 +45,12 @@ def is_recent(entry, max_days=7):
         pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
         return (now - pub_date) <= timedelta(days=max_days)
-    return True  # Se manca la data precisa, ci fidiamo della query Google when:7d
+    return True
 
-def fetch_fresh_youtube_tutorials():
-    """Estrae video YouTube freschi (max 7 giorni) su novità e tutorial AI."""
+def fetch_creator_youtube_videos():
+    """Estrae video recenti su YouTube dei creator italiani e dei trend AI."""
     items = []
-    print("\n--- SCRAPING YOUTUBE (RECENTI 7 GIORNI) ---")
+    print("\n--- SCRAPING YOUTUBE CREATOR ITALIA (MAX 7 GIORNI) ---")
     encoded_query = urllib.parse.quote(YOUTUBE_QUERY)
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=it&gl=IT&ceid=IT:it"
     
@@ -45,26 +58,25 @@ def fetch_fresh_youtube_tutorials():
         res = requests.get(rss_url, headers=HEADERS, timeout=10)
         if res.status_code == 200:
             feed = feedparser.parse(res.text)
-            print(f"YouTube RSS: intercettati {len(feed.entries)} video recenti.")
+            print(f"YouTube Creator: trovati {len(feed.entries)} risultati.")
             for entry in feed.entries:
                 if is_recent(entry, max_days=7):
-                    # Pulizia titolo (rimuove il nome fonte finale aggiunto da Google News)
                     clean_title = entry.title.rsplit(" - ", 1)[0].strip()
                     items.append({
                         "title": clean_title,
                         "link": entry.link,
-                        "source": "YouTube Recent Video"
+                        "source": "YouTube IT"
                     })
-                if len(items) >= 5:
+                if len(items) >= 6:
                     break
     except Exception as e:
-        print(f"Errore YouTube: {e}")
+        print(f"Errore YouTube Creator: {e}")
     return items
 
-def fetch_fresh_instagram_reels():
-    """Estrae Reel e post Instagram freschi (max 7 giorni) dedicati ai Tool AI."""
+def fetch_creator_instagram_reels():
+    """Estrae Reel e post Instagram recenti pubblicati dai creator selezionati."""
     items = []
-    print("\n--- SCRAPING INSTAGRAM REELS (RECENTI 7 GIORNI) ---")
+    print("\n--- SCRAPING INSTAGRAM CREATOR ITALIA (MAX 7 GIORNI) ---")
     encoded_query = urllib.parse.quote(INSTAGRAM_QUERY)
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=it&gl=IT&ceid=IT:it"
     
@@ -72,23 +84,23 @@ def fetch_fresh_instagram_reels():
         res = requests.get(rss_url, headers=HEADERS, timeout=10)
         if res.status_code == 200:
             feed = feedparser.parse(res.text)
-            print(f"Instagram RSS: intercettati {len(feed.entries)} Reel/Post.")
+            print(f"Instagram Creator: trovati {len(feed.entries)} Reel/Post.")
             for entry in feed.entries:
                 if is_recent(entry, max_days=7):
                     clean_title = entry.title.rsplit(" - ", 1)[0].strip()
                     items.append({
                         "title": clean_title,
                         "link": entry.link,
-                        "source": "Instagram Reel/Post"
+                        "source": "Instagram Creator"
                     })
-                if len(items) >= 5:
+                if len(items) >= 6:
                     break
     except Exception as e:
-        print(f"Errore Instagram: {e}")
+        print(f"Errore Instagram Creator: {e}")
     return items
 
 def fetch_reddit_app_showcases():
-    """Estrae i post di Reddit filtrati per freschezza e parole chiave."""
+    """Estrae progetti e tool gratuiti lanciati su Reddit."""
     items = []
     print("\n--- SCRAPING REDDIT TOOL SHOWCASE ---")
     for sub in REDDIT_SUBS:
@@ -106,13 +118,13 @@ def fetch_reddit_app_showcases():
                             count += 1
                             if count >= 3:
                                 break
-                print(f"Reddit r/{sub}: estratti {count} elementi recenti.")
+                print(f"Reddit r/{sub}: estratti {count} elementi.")
         except Exception as e:
             print(f"Errore Reddit r/{sub}: {e}")
     return items
 
 def fetch_telegram_app_tips():
-    """Estrae consigli pratici dai canali Telegram."""
+    """Estrae spunti veloci dai canali Telegram."""
     items = []
     print("\n--- SCRAPING TELEGRAM APP TIPS ---")
     for ch in TELEGRAM_CHANNELS:
@@ -141,11 +153,11 @@ def build_email_body(youtube_items, instagram_items, reddit_items, telegram_item
     html = """
     <html>
     <body style="font-family: Arial, sans-serif; color: #222; line-height: 1.6;">
-        <h2 style="color: #6200ee;">&#9889; AI Radar: Novit&agrave; &amp; Tool Gratuiti della Settimana</h2>
-        <p>Selezione aggiornata dei contenuti usciti negli ultimi 7 giorni.</p>
+        <h2 style="color: #6200ee;">&#9889; AI Radar: Consigli Creator, Tool &amp; Video Settimanali</h2>
+        <p>Digest aggiornato con i contenuti dei migliori divulgatori AI italiani (Montemagno, Gaito, Pioli, Castagna, ecc.).</p>
         <hr style="border: 0; border-top: 1px solid #ddd;">
         
-        <h3 style="color: #ff9800;">&#127916; Video Tutorial Recenti (YouTube)</h3>
+        <h3 style="color: #ff9800;">&#127916; Video &amp; Tutorial dai Creator (YouTube)</h3>
     """
     if youtube_items:
         html += "<ul>"
@@ -153,25 +165,25 @@ def build_email_body(youtube_items, instagram_items, reddit_items, telegram_item
             html += f"<li style='margin-bottom: 8px;'><a href='{item['link']}' target='_blank'><b>{item['title']}</b></a> <span style='font-size:0.8em; color:#666;'>[{item['source']}]</span></li>"
         html += "</ul>"
     else:
-        html += "<p style='color:#777;'>Nessun nuovo video trovato negli ultimi 7 giorni.</p>"
+        html += "<p style='color:#777;'>Nessun nuovo video intercettato questa settimana.</p>"
 
-    html += "<h3 style='color: #e1306c;'>&#128248; Consigli App &amp; Reel AI (Instagram)</h3>"
+    html += "<h3 style='color: #e1306c;'>&#128248; Reel &amp; Post dei Creator AI (Instagram)</h3>"
     if instagram_items:
         html += "<ul>"
         for item in instagram_items:
             html += f"<li style='margin-bottom: 8px;'><a href='{item['link']}' target='_blank'><b>{item['title']}</b></a> <span style='font-size:0.8em; color:#666;'>[{item['source']}]</span></li>"
         html += "</ul>"
     else:
-        html += "<p style='color:#777;'>Nessun Reel o post recente intercettato.</p>"
+        html += "<p style='color:#777;'>Nessun Reel o post recente intercettato dai creator.</p>"
 
-    html += "<h3 style='color: #03a9f4;'>&#128736; Nuove App &amp; Tool Gratuiti (Reddit)</h3>"
+    html += "<h3 style='color: #03a9f4;'>&#128736; Nuovi Tool &amp; App Gratuiti (Reddit)</h3>"
     if reddit_items:
         html += "<ul>"
         for item in reddit_items:
             html += f"<li style='margin-bottom: 8px;'><a href='{item['link']}' target='_blank'><b>{item['title']}</b></a> <span style='font-size:0.8em; color:#666;'>[{item['source']}]</span></li>"
         html += "</ul>"
     else:
-        html += "<p style='color:#777;'>Nessuna nuova app rilevata su Reddit negli ultimi giorni.</p>"
+        html += "<p style='color:#777;'>Nessuna nuova app rilevata su Reddit.</p>"
 
     html += "<h3 style='color: #0088cc;'>&#128227; Mini-Guide &amp; Flash Tips (Telegram)</h3>"
     if telegram_items:
@@ -206,10 +218,10 @@ def send_email(subject, html_content):
         print(f"Errore invio e-mail: {e}")
 
 if __name__ == "__main__":
-    youtube = fetch_fresh_youtube_tutorials()
-    instagram = fetch_fresh_instagram_reels()
+    youtube = fetch_creator_youtube_videos()
+    instagram = fetch_creator_instagram_reels()
     reddit = fetch_reddit_app_showcases()
     telegram = fetch_telegram_app_tips()
     
     html = build_email_body(youtube, instagram, reddit, telegram)
-    send_email("🚀 AI Radar: Video Recenti, Instagram & Tool Gratuiti", html)
+    send_email("🚀 AI Radar: Consigli Creator IT, Video & App Gratuiti", html)
