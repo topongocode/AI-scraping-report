@@ -1,1 +1,30 @@
+name: AI Radar 3x Weekly Digest
 
+on:
+  schedule:
+    # Esegue Lunedì, Mercoledì e Venerdì alle 06:00 UTC (8:00 AM Italiane)
+    - cron: '0 6 * * 1,3,5'
+  workflow_dispatch:
+
+jobs:
+  run-ai-scraper:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run AI Scraper
+        env:
+          SENDER_EMAIL: "topongo@gmail.com"
+          RECEIVER_EMAIL: "topongo@gmail.com"
+          SMTP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python ai_digest_scraper.py
