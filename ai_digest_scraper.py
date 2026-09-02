@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import smtplib
 import urllib.parse
@@ -33,7 +34,6 @@ HEADERS = {
 }
 
 def fetch_youtube_influencers():
-    """Risolve il bug di YouTube scaricando prima l'XML via requests con header reali."""
     items = []
     print("\n--- SCRAPING YOUTUBE INFLUENCERS ---")
     for name, channel_id in YOUTUBE_INFLUENCERS.items():
@@ -43,7 +43,7 @@ def fetch_youtube_influencers():
             if res.status_code == 200:
                 feed = feedparser.parse(res.text)
                 print(f"YouTube @{name}: trovati {len(feed.entries)} video.")
-                for entry in feed.entries[:2]:  # Prendi gli ultimi 2 video per influencer
+                for entry in feed.entries[:2]:
                     items.append({
                         "title": entry.title,
                         "link": entry.link,
@@ -56,10 +56,8 @@ def fetch_youtube_influencers():
     return items
 
 def fetch_instagram_influencer_reels():
-    """Filtra specificamente Reel e Post di consigli su App AI e Tool gratuiti."""
     items = []
     print("\n--- SCRAPING INSTAGRAM REELS & CREATOR ---")
-    # Query mirata a Reel e Post singoli di consigli/tool
     query = '(site:instagram.com/reel/ OR site:instagram.com/p/) ("ai tool" OR "app intelligenza artificiale" OR "consigli ai" OR "tool gratuito")'
     encoded_query = urllib.parse.quote(query)
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=it&gl=IT&ceid=IT:it"
@@ -71,7 +69,6 @@ def fetch_instagram_influencer_reels():
             print(f"Instagram Reels/Post intercettati: {len(feed.entries)}")
             for entry in feed.entries[:5]:
                 title = entry.title.split(" - ")[0].strip()
-                # Pulisci il titolo da eventuali caratteri estranei
                 items.append({
                     "title": title,
                     "link": entry.link,
@@ -82,7 +79,6 @@ def fetch_instagram_influencer_reels():
     return items
 
 def fetch_reddit_app_showcases():
-    """Estrae i post di Reddit focalizzati su app e script pratici."""
     items = []
     print("\n--- SCRAPING REDDIT TOOL SHOWCASE ---")
     for sub in REDDIT_SUBS:
@@ -105,7 +101,6 @@ def fetch_reddit_app_showcases():
     return items
 
 def fetch_telegram_app_tips():
-    """Estrae consigli pratici sulle app dai canali Telegram selezionati."""
     items = []
     print("\n--- SCRAPING TELEGRAM APP TIPS ---")
     for ch in TELEGRAM_CHANNELS:
@@ -131,14 +126,14 @@ def fetch_telegram_app_tips():
     return items
 
 def build_email_body(youtube_items, instagram_items, reddit_items, telegram_items):
-    html = f"""
+    html = """
     <html>
     <body style="font-family: Arial, sans-serif; color: #222; line-height: 1.6;">
-        <h2 style="color: #6200ee;">⚡ AI Radar: Consigli, App & Tutorial dagli Influencer</h2>
+        <h2 style="color: #6200ee;">&#9889; AI Radar: Consigli, App &amp; Tutorial dagli Influencer</h2>
         <p>Selezione aggiornata dei migliori tool gratuiti, video e consigli pratici sul mondo AI.</p>
         <hr style="border: 0; border-top: 1px solid #ddd;">
         
-        <h3 style="color: #ff9800;">🎬 Video Tutorial & Demo dagli Influencer (YouTube)</h3>
+        <h3 style="color: #ff9800;">&#127916; Video Tutorial &amp; Demo dagli Influencer (YouTube)</h3>
     """
     if youtube_items:
         html += "<ul>"
@@ -148,7 +143,7 @@ def build_email_body(youtube_items, instagram_items, reddit_items, telegram_item
     else:
         html += "<p style='color:#777;'>Nessun nuovo video dagli influencer YouTube selezionati.</p>"
 
-    html += "<h3 style='color: #e1306c;'>📸 Consigli App & Reel AI (Instagram)</h3>"
+    html += "<h3 style='color: #e1306c;'>&#128248; Consigli App &amp; Reel AI (Instagram)</h3>"
     if instagram_items:
         html += "<ul>"
         for item in instagram_items:
@@ -157,7 +152,7 @@ def build_email_body(youtube_items, instagram_items, reddit_items, telegram_item
     else:
         html += "<p style='color:#777;'>Nessun Reel o post di consigli intercettato.</p>"
 
-    html += "<h3 style='color: #03a9f4;">🛠️ Nuove App & Tool Gratuiti (Reddit)</h3>"
+    html += "<h3 style='color: #03a9f4;'>&#128736; Nuove App &amp; Tool Gratuiti (Reddit)</h3>"
     if reddit_items:
         html += "<ul>"
         for item in reddit_items:
@@ -166,7 +161,7 @@ def build_email_body(youtube_items, instagram_items, reddit_items, telegram_item
     else:
         html += "<p style='color:#777;'>Nessuna nuova app rilevata su Reddit.</p>"
 
-    html += "<h3 style='color: #0088cc;'>📢 Mini-Guide & Flash Tips (Telegram)</h3>"
+    html += "<h3 style='color: #0088cc;'>&#128227; Mini-Guide &amp; Flash Tips (Telegram)</h3>"
     if telegram_items:
         html += "<ul>"
         for item in telegram_items:
@@ -188,7 +183,7 @@ def send_email(subject, html_content):
     msg["Subject"] = subject
     msg["From"] = SENDER_EMAIL
     msg["To"] = RECEIVER_EMAIL
-    msg.attach(MIMEText(html_content, "html"))
+    msg.attach(MIMEText(html_content, "html", "utf-8"))
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
