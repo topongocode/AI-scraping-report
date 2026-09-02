@@ -1,86 +1,80 @@
 import os
 import smtplib
+import urllib.parse
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from playwright.sync_api import sync_playwright
+import feedparser
+import requests
 from bs4 import BeautifulSoup
 
-# URL GENERALI "QUESTA SETTIMANA" SENZA FILTRI PER KEYWORD
-TARGET_URLS = {
-    "Milano": "https://www.eventbrite.it/d/italy--milan/events--this-week/",
-    "Roma": "https://www.eventbrite.it/d/italy--rome/events--this-week/",
-    "Brescia": "https://www.eventbrite.it/d/italy--brescia/events--this-week/"
-}
+# CITTÀ DA MONITORARE
+CITIES = ["Milano", "Roma", "Brescia"]
+KEYWORDS = "startup OR business OR networking OR \"intelligenza artificiale\" OR legaltech"
 
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "topongo@gmail.com")
 RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL", "topongo@gmail.com")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 
-def test_broad_scrape(city_name, url):
+def resolve_google_link(rss_link):
     """
-    Carica la pagina generale degli eventi della settimana ed estrae tutti gli URL di tipo /e/
+    Risolve il redirect interno di Google News per ottenere l'URL reale di Eventbrite.
     """
-    events = []
-    print(f"\n--- AVVIO TEST PER {city_name.upper()} ---")
-    print(f"URL: {url}")
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+        res = requests.get(rss_link, headers=headers, timeout=8, allow_redirects=True)
+        if res.status_code == 200:
+            return res.url.split('?')[0]
+    except Exception:
+        pass
+    return rss_link
+
+def fetch_events_via_rss(city):
+    """
+    Interroga il Feed RSS di Google Search per trovare eventi Eventbrite per la città specificata.
+    Bypassa al 100% i blocchi IP di Cloudflare/GitHub.
+    """
+    query = f"site:eventbrite.it {city} ({KEYWORDS})"
+    encoded_query = urllib.parse.quote(query)
+    rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=it&gl=IT&ceid=IT:it"
     
-    with sync_playwright() as p:
-        # Configurazione browser per simulare un utente reale
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled"]
-        )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            locale="it-IT"
-        )
-        page = context.new_page()
+    print(f"\n--- DOWNLOAD RSS PER {city.upper()} ---")
+    feed = feedparser.parse(rss_url)
+    
+    events = []
+    seen_titles = set()
+
+    for entry in feed.entries:
+        title = entry.title
+        # Pulizia del titolo rimosso il suffisso del publisher se presente
+        clean_title = title.split(" - ")[0].strip()
         
-        try:
-            response = page.goto(url, timeout=40000, wait_until="domcontentloaded")
-            page.wait_for_timeout(5000)  # Attesa per il rendering dei componenti JS
+        if clean_title.lower() in seen_titles:
+            continue
+        seen_titles.add(clean_title.lower())
+        
+        # Estrazione e risoluzione link reale
+        raw_link = entry.link
+        final_link = resolve_google_link(raw_link)
+        
+        events.append({
+            "title": clean_title,
+            "link": final_link
+        })
+        
+        if len(events) >= 8:
+            break
             
-            page_title = page.title()
-            print(f"LOG DEBUG - Titolo pagina caricata: '{page_title}'")
-            print(f"LOG DEBUG - Codice di risposta HTTP: {response.status if response else 'N/A'}")
-            
-            # Verifica blocco Cloudflare
-            if "pardon our interruption" in page_title.lower() or "just a moment" in page_title.lower():
-                print("⚠️ RILEVATO BLOCCO ANTI-BOT (Cloudflare) sull'IP di GitHub Actions!")
-                return events
-
-            content = page.content()
-            soup = BeautifulSoup(content, 'html.parser')
-            
-            # Estrazione di tutti i link che portano ad eventi (/e/)
-            links = soup.find_all('a', href=True)
-            for a in links:
-                href = a['href']
-                title = a.get_text(strip=True)
-                
-                if '/e/' in href and len(title) > 3:
-                    clean_href = href.split('?')[0]
-                    if not clean_href.startswith("http"):
-                        clean_href = f"https://www.eventbrite.it{clean_href}"
-                    
-                    if not any(x in clean_href for x in ["/login", "/signin", "/checkout"]):
-                        events.append({"title": title, "link": clean_href})
-                        
-            print(f"LOG DEBUG - Trovati {len(events)} elementi grezzi per {city_name}.")
-
-        except Exception as e:
-            print(f"Errore durante la navigazione su {city_name}: {e}")
-        finally:
-            browser.close()
-            
+    print(f"Estratti {len(events)} eventi per {city}.")
     return events
 
 def build_email_body(all_results):
     html = """
     <html>
     <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.5;">
-        <h2 style="color: #0d47a1;">🧪 TEST: Tutti gli Eventi della Settimana</h2>
-        <p>Risultati grezzi per <b>Milano, Roma e Brescia</b> (senza filtri di categoria):</p>
+        <h2 style="color: #0d47a1;">📌 Digest Settimanale Eventi Tech, AI & Business</h2>
+        <p>Ecco gli eventi identificati per <b>Milano, Roma e Brescia</b>:</p>
         <hr style="border: 0; border-top: 1px solid #ccc;">
     """
     
@@ -92,17 +86,17 @@ def build_email_body(all_results):
             has_events = True
             html += "<ul style='margin-top: 5px;'>"
             for ev in events:
-                html += f"<li style='margin-bottom: 6px;'><a href='{ev['link']}' target='_blank' style='color: #1a73e8; text-decoration: none;'><b>{ev['title']}</b></a></li>"
+                html += f"<li style='margin-bottom: 8px;'><a href='{ev['link']}' target='_blank' style='color: #1a73e8; text-decoration: none;'><b>{ev['title']}</b></a></li>"
             html += "</ul>"
         else:
-            html += "<p style='color: #d32f2f;'><i>Nessun evento estratto (pagina vuota o blocco anti-bot).</i></p>"
+            html += "<p style='color: #777;'><i>Nessun evento recente intercettato per questa città.</i></p>"
     
     if not has_events:
-        html += "<p><b>Nessun evento trovato in totale. Verificare i log di GitHub Actions per dettagli sul blocco IP.</b></p>"
+        html += "<p>Nessun evento trovato per i criteri impostati.</p>"
         
     html += """
         <hr style="border: 0; border-top: 1px solid #ccc; margin-top: 30px;">
-        <p style='font-size: 0.85em; color: #777;'>Test di connessione diretta Eventbrite - Avv. Alessandro Ghiani</p>
+        <p style='font-size: 0.85em; color: #777;'>Automazione RSS Engine - Avv. Alessandro Ghiani</p>
     </body>
     </html>
     """
@@ -121,26 +115,15 @@ def send_email(subject, html_content):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(SENDER_EMAIL, SMTP_PASSWORD)
             server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
-        print("Email di test inviata con successo!")
+        print("Email inviata con successo!")
     except Exception as e:
         print(f"Errore nell'invio dell'email: {e}")
 
 if __name__ == "__main__":
     results = {}
     
-    for city, url in TARGET_URLS.items():
-        raw_events = test_broad_scrape(city, url)
-        
-        # Deduplicazione dei link
-        unique_events = []
-        seen_links = set()
-        for ev in raw_events:
-            if ev['link'] not in seen_links:
-                seen_links.add(ev['link'])
-                unique_events.append(ev)
-                
-        # Prendiamo fino a 15 eventi per città per il test
-        results[city] = unique_events[:15]
+    for city in CITIES:
+        results[city] = fetch_events_via_rss(city)
             
     html_report = build_email_body(results)
-    send_email("🧪 TEST Eventbrite: Eventi Indistinti della Settimana", html_report)
+    send_email("🗓️ Digest Eventi Tech & Business (RSS Engine)", html_report)
