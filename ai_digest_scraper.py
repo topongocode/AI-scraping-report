@@ -7,91 +7,111 @@ import requests
 import feedparser
 from bs4 import BeautifulSoup
 
-# CONFIGURAZIONE FONTI
-REDDIT_SUBS = ["LocalLLaMA", "AITools", "ArtificialInteligence"]
-TELEGRAM_CHANNELS = ["n8n_io", "aitools"]
-YOUTUBE_CHANNELS = {
+# 1. CANALI YOUTUBE INFLUENCER AI (ID Canale Ufficiali)
+YOUTUBE_INFLUENCERS = {
     "Matt Wolfe": "UCJQJaiTKy3fzacOpqL5WTEg",
-    "AI Advantage": "UCHL9snU3056o9qR3hR4c_CA"
+    "AI Advantage": "UCHL9snU3056o9qR3hR4c_CA",
+    "Matthew Berman": "UCm63P_OAt1L2O0jXWACmO0Q",
+    "Nate MacIntyre": "UCyLBy9S9v6O-d7v40Apt9fA"
 }
 
-# KEYWORD PER FILTRARE I CONTENUTI DI QUALITÀ
-QUALITY_KEYWORDS = ["free", "tool", "gratis", "github", "ai", "app", "tutorial", "software", "model"]
+# 2. SUBREDDIT DEDICATI A TOOL E APP AI
+REDDIT_SUBS = ["AITools", "CoolGithubProjects", "ArtificialInteligence"]
+
+# 3. CANALI TELEGRAM AI TOOL & APP
+TELEGRAM_CHANNELS = ["aitools", "n8n_io", "aitoolsdaily"]
+
+# PAROLE CHIAVE PER FILTRARE I CONSIGLI SULLE APP
+APP_KEYWORDS = ["app", "tool", "free", "gratis", "github", "software", "consiglio", "tutorial", "prompt", "workflow"]
 
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "topongo@gmail.com")
 RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL", "topongo@gmail.com")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+}
 
-def fetch_reddit_rss():
-    """Estrae i post tramite i Feed RSS ufficiali di Reddit (bypassa il blocco JSON)."""
+def fetch_youtube_influencers():
+    """Risolve il bug di YouTube scaricando prima l'XML via requests con header reali."""
     items = []
-    print("\n--- AVVIO SCRAPING REDDIT (RSS) ---")
-    for sub in REDDIT_SUBS:
-        url = f"https://www.reddit.com/r/{sub}/hot.rss"
-        try:
-            feed = feedparser.parse(url, agent=USER_AGENT)
-            print(f"Reddit r/{sub}: trovati {len(feed.entries)} elementi.")
-            for entry in feed.entries[:4]:
-                title = entry.title
-                link = entry.link
-                items.append({"title": title, "link": link, "source": f"r/{sub}"})
-        except Exception as e:
-            print(f"Errore Reddit r/{sub}: {e}")
-    return items
-
-def fetch_youtube_tutorials():
-    """Estrae i video tutorial dai Feed RSS ufficiali dei canali YouTube."""
-    items = []
-    print("\n--- AVVIO SCRAPING YOUTUBE ---")
-    for name, channel_id in YOUTUBE_CHANNELS.items():
+    print("\n--- SCRAPING YOUTUBE INFLUENCERS ---")
+    for name, channel_id in YOUTUBE_INFLUENCERS.items():
         rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
         try:
-            feed = feedparser.parse(rss_url, agent=USER_AGENT)
-            print(f"YouTube {name}: trovati {len(feed.entries)} video.")
-            for entry in feed.entries[:2]:
-                items.append({
-                    "title": entry.title,
-                    "link": entry.link,
-                    "source": f"YouTube ({name})"
-                })
+            res = requests.get(rss_url, headers=HEADERS, timeout=10)
+            if res.status_code == 200:
+                feed = feedparser.parse(res.text)
+                print(f"YouTube @{name}: trovati {len(feed.entries)} video.")
+                for entry in feed.entries[:2]:  # Prendi gli ultimi 2 video per influencer
+                    items.append({
+                        "title": entry.title,
+                        "link": entry.link,
+                        "source": f"YouTube (@{name})"
+                    })
+            else:
+                print(f"Errore HTTP {res.status_code} su YouTube per {name}")
         except Exception as e:
-            print(f"Errore YouTube {name}: {e}")
+            print(f"Eccezione YouTube {name}: {e}")
     return items
 
-def fetch_instagram_ai_news():
-    """Aggira il blocco Instagram usando l'indice Google RSS per Reel e post su AI Tool."""
+def fetch_instagram_influencer_reels():
+    """Filtra specificamente Reel e Post di consigli su App AI e Tool gratuiti."""
     items = []
-    print("\n--- AVVIO SCRAPING INSTAGRAM (VIA GOOGLE RSS) ---")
-    query = 'site:instagram.com ("AI tool" OR "tool gratuito" OR "intelligenza artificiale")'
+    print("\n--- SCRAPING INSTAGRAM REELS & CREATOR ---")
+    # Query mirata a Reel e Post singoli di consigli/tool
+    query = '(site:instagram.com/reel/ OR site:instagram.com/p/) ("ai tool" OR "app intelligenza artificiale" OR "consigli ai" OR "tool gratuito")'
     encoded_query = urllib.parse.quote(query)
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=it&gl=IT&ceid=IT:it"
     
     try:
-        feed = feedparser.parse(rss_url, agent=USER_AGENT)
-        print(f"Instagram (via Google): trovati {len(feed.entries)} risultati.")
-        for entry in feed.entries[:4]:
-            title = entry.title.split(" - ")[0].strip()
-            items.append({
-                "title": title,
-                "link": entry.link,
-                "source": "Instagram News"
-            })
+        res = requests.get(rss_url, headers=HEADERS, timeout=10)
+        if res.status_code == 200:
+            feed = feedparser.parse(res.text)
+            print(f"Instagram Reels/Post intercettati: {len(feed.entries)}")
+            for entry in feed.entries[:5]:
+                title = entry.title.split(" - ")[0].strip()
+                # Pulisci il titolo da eventuali caratteri estranei
+                items.append({
+                    "title": title,
+                    "link": entry.link,
+                    "source": "Instagram Creator/Reels"
+                })
     except Exception as e:
         print(f"Errore Instagram: {e}")
     return items
 
-def fetch_telegram_filtered():
-    """Estrae i messaggi Telegram filtrando solo quelli che contengono tool o novità reali."""
+def fetch_reddit_app_showcases():
+    """Estrae i post di Reddit focalizzati su app e script pratici."""
     items = []
-    print("\n--- AVVIO SCRAPING TELEGRAM (FILTRATO) ---")
-    headers = {"User-Agent": USER_AGENT}
-    
+    print("\n--- SCRAPING REDDIT TOOL SHOWCASE ---")
+    for sub in REDDIT_SUBS:
+        url = f"https://www.reddit.com/r/{sub}/hot.rss"
+        try:
+            res = requests.get(url, headers=HEADERS, timeout=10)
+            if res.status_code == 200:
+                feed = feedparser.parse(res.text)
+                count = 0
+                for entry in feed.entries:
+                    title = entry.title
+                    if any(kw in title.lower() for kw in APP_KEYWORDS):
+                        items.append({"title": title, "link": entry.link, "source": f"r/{sub}"})
+                        count += 1
+                        if count >= 3:
+                            break
+                print(f"Reddit r/{sub}: estratti {count} tool/app rilevanti.")
+        except Exception as e:
+            print(f"Errore Reddit r/{sub}: {e}")
+    return items
+
+def fetch_telegram_app_tips():
+    """Estrae consigli pratici sulle app dai canali Telegram selezionati."""
+    items = []
+    print("\n--- SCRAPING TELEGRAM APP TIPS ---")
     for ch in TELEGRAM_CHANNELS:
         url = f"https://t.me/s/{ch}"
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            res = requests.get(url, headers=HEADERS, timeout=10)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, "html.parser")
                 messages = soup.find_all("div", class_="tgme_widget_message_text")
@@ -99,55 +119,54 @@ def fetch_telegram_filtered():
                 count = 0
                 for msg in reversed(messages):
                     text = msg.get_text(strip=True)
-                    # Filtra solo se il messaggio contiene parole chiave di interesse
-                    if any(kw in text.lower() for kw in QUALITY_KEYWORDS) and len(text) > 40:
-                        short_text = text[:140] + "..."
+                    if any(kw in text.lower() for kw in APP_KEYWORDS) and len(text) > 30:
+                        short_text = text[:130] + "..."
                         items.append({"title": short_text, "link": url, "source": f"Telegram @{ch}"})
                         count += 1
-                        if count >= 3:
+                        if count >= 2:
                             break
-                print(f"Telegram @{ch}: trovati {count} messaggi rilevanti.")
+                print(f"Telegram @{ch}: trovati {count} consigli app.")
         except Exception as e:
             print(f"Errore Telegram {ch}: {e}")
     return items
 
-def build_email_body(reddit_items, youtube_items, instagram_items, telegram_items):
+def build_email_body(youtube_items, instagram_items, reddit_items, telegram_items):
     html = f"""
     <html>
     <body style="font-family: Arial, sans-serif; color: #222; line-height: 1.6;">
-        <h2 style="color: #6200ee;">⚡ AI Radar: Nuovi Tool Gratuiti, Trend & Tutorial</h2>
-        <p>Digest multi-fonte per rimanere aggiornato su novità, script e strumenti AI.</p>
+        <h2 style="color: #6200ee;">⚡ AI Radar: Consigli, App & Tutorial dagli Influencer</h2>
+        <p>Selezione aggiornata dei migliori tool gratuiti, video e consigli pratici sul mondo AI.</p>
         <hr style="border: 0; border-top: 1px solid #ddd;">
         
-        <h3 style="color: #03a9f4;">🛠️ Reddit: Nuovi Tool & Discussioni Tech</h3>
+        <h3 style="color: #ff9800;">🎬 Video Tutorial & Demo dagli Influencer (YouTube)</h3>
     """
-    if reddit_items:
-        html += "<ul>"
-        for item in reddit_items:
-            html += f"<li style='margin-bottom: 8px;'><a href='{item['link']}' target='_blank'><b>{item['title']}</b></a> <span style='font-size:0.8em; color:#666;'>[{item['source']}]</span></li>"
-        html += "</ul>"
-    else:
-        html += "<p style='color:#777;'>Nessun dato da Reddit.</p>"
-
-    html += "<h3 style='color: #ff9800;'>🎬 YouTube: Video Tutorial & Demo</h3>"
     if youtube_items:
         html += "<ul>"
         for item in youtube_items:
             html += f"<li style='margin-bottom: 8px;'><a href='{item['link']}' target='_blank'><b>{item['title']}</b></a> <span style='font-size:0.8em; color:#666;'>[{item['source']}]</span></li>"
         html += "</ul>"
     else:
-        html += "<p style='color:#777;'>Nessun video trovato.</p>"
+        html += "<p style='color:#777;'>Nessun nuovo video dagli influencer YouTube selezionati.</p>"
 
-    html += "<h3 style='color: #e1306c;'>📸 Instagram: Post & Trend AI</h3>"
+    html += "<h3 style='color: #e1306c;'>📸 Consigli App & Reel AI (Instagram)</h3>"
     if instagram_items:
         html += "<ul>"
         for item in instagram_items:
             html += f"<li style='margin-bottom: 8px;'><a href='{item['link']}' target='_blank'><b>{item['title']}</b></a> <span style='font-size:0.8em; color:#666;'>[{item['source']}]</span></li>"
         html += "</ul>"
     else:
-        html += "<p style='color:#777;'>Nessun contenuto Instagram intercettato.</p>"
+        html += "<p style='color:#777;'>Nessun Reel o post di consigli intercettato.</p>"
 
-    html += "<h3 style='color: #0088cc;'>📢 Telegram: Selezione Tool Gratuiti</h3>"
+    html += "<h3 style='color: #03a9f4;">🛠️ Nuove App & Tool Gratuiti (Reddit)</h3>"
+    if reddit_items:
+        html += "<ul>"
+        for item in reddit_items:
+            html += f"<li style='margin-bottom: 8px;'><a href='{item['link']}' target='_blank'><b>{item['title']}</b></a> <span style='font-size:0.8em; color:#666;'>[{item['source']}]</span></li>"
+        html += "</ul>"
+    else:
+        html += "<p style='color:#777;'>Nessuna nuova app rilevata su Reddit.</p>"
+
+    html += "<h3 style='color: #0088cc;'>📢 Mini-Guide & Flash Tips (Telegram)</h3>"
     if telegram_items:
         html += "<ul>"
         for item in telegram_items:
@@ -180,10 +199,10 @@ def send_email(subject, html_content):
         print(f"Errore invio e-mail: {e}")
 
 if __name__ == "__main__":
-    reddit = fetch_reddit_rss()
-    youtube = fetch_youtube_tutorials()
-    instagram = fetch_instagram_ai_news()
-    telegram = fetch_telegram_filtered()
+    youtube = fetch_youtube_influencers()
+    instagram = fetch_instagram_influencer_reels()
+    reddit = fetch_reddit_app_showcases()
+    telegram = fetch_telegram_app_tips()
     
-    html = build_email_body(reddit, youtube, instagram, telegram)
-    send_email("🚀 AI Radar: Nuovi Tool Gratuiti, YouTube & Instagram", html)
+    html = build_email_body(youtube, instagram, reddit, telegram)
+    send_email("🚀 AI Radar: Consigli App, Video & Tool dagli Influencer", html)
